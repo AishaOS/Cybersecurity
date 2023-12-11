@@ -1,14 +1,40 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from urllib.parse import urlparse, parse_qs
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import padding
 import base64
 import json
 import datetime
 import jwt
 import sqlite3
+import os 
+
+def derive_key(password: bytes, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,  # Length of the derived key
+        salt=salt,
+        iterations=100000,
+        backend=default_backend()
+    )
+    return kdf.derive(password)
+
+aes_key_hex = os.environ.get('NOT_MY_KEY', '')
+aes_key = bytes.fromhex(aes_key_hex)
+print("AES Key Length:", len(aes_key))
+
+# Example password and salt
+password = b"your-password"
+salt = os.urandom(16)  # Generate a random salt
+
+derived_key = derive_key(password, salt)
+print("Derived Key:", derived_key.hex())
 
 hostName = "localhost"
 serverPort = 8080
@@ -65,6 +91,41 @@ def get_private_key_for_auth(expired=False):
         return key_data[0]
     return None
 
+def aes_encrypt(key_data):
+    aes_key_hex = os.environ.get('NOT_MY_KEY')
+    if not aes_key_hex:
+        raise ValueError("AES key not found in environment variables.")
+
+    # Convert hexadecimal key to bytes
+    aes_key = bytes.fromhex(aes_key_hex)
+
+    if len(aes_key) not in [16, 24, 32]:
+        raise ValueError("Invalid AES key. Key must be 16, 24, or 32 bytes long.")
+
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+
+    # Pad the data
+    padder = padding.PKCS7(128).padder()  # 128-bit padding for AES block size
+    padded_data = padder.update(key_data) + padder.finalize()
+
+    # Encrypt the data
+    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    return encrypted_data, iv
+
+
+
+def aes_decrypt(encrypted_data, iv):
+    aes_key = os.environ.get('NOT_MY_KEY', '').encode('utf-8')
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+
+    decryptor = cipher.decryptor()  # Create a decryptor instance
+    decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
+
+    unpadder = padding.PKCS7(128).unpadder()  # Unpad the data
+    unpadded_data = unpadder.update(decrypted_data) + unpadder.finalize()
+    return unpadded_data
 
 def get_all_valid_private_keys():
     conn = sqlite3.connect('totally_not_my_privateKeys.db')
@@ -135,13 +196,15 @@ class MyServer(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length).decode('utf-8')
 
+
         # Handle /auth endpoint:
         if path == "/auth":
             if not post_data.strip():
                 print("Received empty POST data.")
                 self.send_response(400, "Bad Request: No data sent")
                 self.end_headers()
-                return
+                return 
+                
 
             # For simplicity, let's assume a valid user always sends {"user": "admin", "password": "password"} as JSON.
             try:
@@ -169,6 +232,44 @@ class MyServer(BaseHTTPRequestHandler):
         self.send_response(405)
         self.end_headers()
         return
+    
+    def do_POST_register(self, post_data):
+        try:
+            data = json.loads(post_data)
+
+            # Extract username and email from the request data
+            username = data.get("username")
+            email = data.get("email")
+
+            # Generate a secure password, for example using UUID
+            password = str(uuid.uuid4())
+
+            # Hash the password before storing it (use a secure hashing algorithm)
+            hashed_password = hash_password(password)  # Implement hash_password method
+
+            # Store the new user in the database
+            conn = sqlite3.connect('my_database.db')
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)", 
+                        (username, hashed_password, email))
+            conn.commit()
+            conn.close()
+
+            # Send the generated password back to the user
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {"password": password}
+            self.wfile.write(bytes(json.dumps(response), "utf-8"))
+
+        except json.JSONDecodeError:
+            self.send_response(400, "Bad Request: Data is not valid JSON")
+            self.end_headers()
+        except sqlite3.Error as e:
+            # Handle database errors
+            print(f"Database error: {e}")
+            self.send_response(500, "Internal Server Error")
+            self.end_headers()
 
     def do_GET(self):
         if self.path == "/.well-known/jwks.json":
@@ -238,40 +339,40 @@ class MyServer(BaseHTTPRequestHandler):
 def initialize_keys_database():
     conn = sqlite3.connect('totally_not_my_privateKeys.db')
     cursor = conn.cursor()
+
+    # Modify this query to add the 'iv' column to your table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS private_keys (
         id INTEGER PRIMARY KEY,
         key_name TEXT NOT NULL,
-        key_data TEXT NOT NULL,
+        key_data BLOB NOT NULL,  -- Changed to BLOB to store binary data
+        iv BLOB NOT NULL,        -- New column for the IV
         expiration_time DATETIME
     )
     ''')
     conn.commit()
     conn.close()
+
+
 initialize_keys_database()
 
 
 def initialize_database():
     conn = sqlite3.connect('my_database.db')
     cursor = conn.cursor()
-    # tokens table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS tokens (
-        id INTEGER PRIMARY KEY,
-        token TEXT NOT NULL,
-        user TEXT NOT NULL,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-    # private_keys table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS private_keys (
-        id INTEGER PRIMARY KEY,
-        key_name TEXT NOT NULL,
-        key_data TEXT NOT NULL,
-        expiration_time DATETIME
-    )
-    ''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL UNIQUE,
+                        password_hash TEXT NOT NULL,
+                        email TEXT UNIQUE,
+                        date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_login TIMESTAMP)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS auth_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_ip TEXT NOT NULL,
+                        request_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        user_id INTEGER,
+                        FOREIGN KEY(user_id) REFERENCES users(id))''')
     conn.commit()
     conn.close()
 
@@ -279,9 +380,11 @@ initialize_database()
 
 
 def insert_key(key_name, key_data, expiration_time=None):
+    encrypted_data, iv = aes_encrypt(key_data.encode('utf-8'))
     conn = sqlite3.connect('totally_not_my_privateKeys.db')
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO private_keys (key_name, key_data, expiration_time) VALUES (?, ?, ?)", (key_name, key_data, expiration_time))
+    cursor.execute("INSERT INTO private_keys (key_name, key_data, iv, expiration_time) VALUES (?, ?, ?, ?)", 
+                   (key_name, encrypted_data, iv, expiration_time))
     conn.commit()
     conn.close()
 
@@ -293,13 +396,15 @@ insert_key("expired_key", expired_pem.decode('utf-8'), (datetime.datetime.now(da
 def get_private_key(key_name):
     conn = sqlite3.connect('totally_not_my_privateKeys.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT key_data FROM private_keys WHERE key_name = ?", (key_name,))
-    key_data = cursor.fetchone()
+    cursor.execute("SELECT key_data, iv FROM private_keys WHERE key_name = ?", (key_name,))
+    row = cursor.fetchone()
     conn.close()
 
-    if key_data:
-        return key_data[0]
+    if row:
+        key_data, iv = row
+        return aes_decrypt(key_data, iv)
     return None
+
 
 
 # Example usage
