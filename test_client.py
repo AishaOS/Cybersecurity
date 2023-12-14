@@ -1,7 +1,6 @@
 import jwt
 import requests
 import base64
-import uuid
 
 
 # Helper function
@@ -16,10 +15,7 @@ def send_request(method, url, **kwargs):
 
 # JWT Authentication tests
 def test_auth_endpoint_valid():
-    # This test should be updated to use a valid username and password
-    # Assuming the server expects JSON data with 'username' and 'password'
-    payload = {"username": "admin", "password": "password"}
-    response = send_request("POST", "http://localhost:8080/auth", json=payload)
+    response = send_request("POST", "http://localhost:8080/auth")
     if response and response.status_code == 200:
         print("Received JWT:", response.text)
     elif response:
@@ -42,7 +38,6 @@ def test_jwks_endpoint():
 
 
 def test_with_basic_auth():
-    # Assuming the endpoint and credentials are correct
     credentials = base64.b64encode(b"userABC:password123").decode('utf-8')
     response = requests.get("http://localhost:8080/your_endpoint", headers={"Authorization": f"Basic {credentials}"})
 
@@ -50,8 +45,8 @@ def test_with_basic_auth():
     print(f"[Basic Auth] Received status code: {response.status_code}")
     print(f"[Basic Auth] Response body: {response.text}")
 
-    # Adjust the assertion based on expected behavior
-    assert response.status_code in [200, 401, 405], "Unexpected status code!"
+    assert response.status_code == 200, "Unexpected status code!"
+    assert "your_jwt_token_key" in response.json(), "JWT token not found in the response!"
 
 def test_with_json_payload():
     payload = {
@@ -77,19 +72,6 @@ def test_db_file_access():
     except Exception as e:
         assert False, f"Error accessing the DB file: {e}"
 
-
-def test_user_registration():
-    # Generate a random username and email for testing
-    username = str(uuid.uuid4())
-    email = username + "@test.com"
-
-    payload = {"username": username, "email": email}
-    response = send_request("POST", "http://localhost:8080/register", json=payload)
-    if response and response.status_code in [200, 201]:
-        print("Registration successful. Response:", response.json())
-    else:
-        print("Registration failed. Response:", response.text)
-
 if __name__ == "__main__":
     test_auth_endpoint_valid()
     test_auth_endpoint_expired()
@@ -97,4 +79,3 @@ if __name__ == "__main__":
     test_with_basic_auth()
     test_with_json_payload()
     test_db_file_access()
-    test_user_registration()
