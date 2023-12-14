@@ -11,15 +11,34 @@ def send_request(method, url, **kwargs):
     except requests.ConnectionError as e:
         print(f"Error connecting to {url}. Details: {e}")
         return None
+    
+def test_register_endpoint():
+    payload = {
+        "username": "newuser",
+        "password": "newpassword",
+        "email": "newuser@example.com"
+    }
+    response = requests.post("http://127.0.0.1:8080/register", json=payload)
+
+    print(f"[Register] Received status code: {response.status_code}")
+    print(f"[Register] Response body: {response.text}")
+
+    assert response.status_code == 201, "Unexpected status code! Expected 201 for successful registration."
 
 
 # JWT Authentication tests
 def test_auth_endpoint_valid():
-    response = send_request("POST", "http://127.0.0.1:8080/auth")
+    payload = {
+        "user": "admin",
+        "password": "password"
+    }
+    response = send_request("POST", "http://127.0.0.1:8080/auth", json=payload)
+
     if response and response.status_code == 200:
         print("Received JWT:", response.text)
     elif response:
         print("Error:", response.text)
+
 
 
 def test_auth_endpoint_expired():
