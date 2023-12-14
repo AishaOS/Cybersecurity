@@ -10,7 +10,7 @@ import datetime
 import jwt
 import sqlite3
 
-hostName = "localhost"
+hostName = "127.0.0.1"
 serverPort = 8080
 
 private_key = rsa.generate_private_key(

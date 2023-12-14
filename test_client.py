@@ -15,7 +15,7 @@ def send_request(method, url, **kwargs):
 
 # JWT Authentication tests
 def test_auth_endpoint_valid():
-    response = send_request("POST", "http://localhost:8080/auth")
+    response = send_request("POST", "http://127.0.0.1:8080/auth")
     if response and response.status_code == 200:
         print("Received JWT:", response.text)
     elif response:
@@ -27,7 +27,7 @@ def test_auth_endpoint_expired():
 
 
 def test_jwks_endpoint():
-    response = requests.get("http://localhost:8080/.well-known/jwks.json")
+    response = requests.get("http://127.0.0.1:8080/.well-known/jwks.json")
     if response.status_code == 200:
         try:
             print("Received JWKS:", response.json())
@@ -39,7 +39,7 @@ def test_jwks_endpoint():
 
 def test_with_basic_auth():
     credentials = base64.b64encode(b"userABC:password123").decode('utf-8')
-    response = requests.get("http://localhost:8080/your_endpoint", headers={"Authorization": f"Basic {credentials}"})
+    response = requests.get("http://127.0.0.1:8080/your_endpoint", headers={"Authorization": f"Basic {credentials}"})
 
     # Debugging statements
     print(f"[Basic Auth] Received status code: {response.status_code}")
@@ -53,7 +53,7 @@ def test_with_json_payload():
         "username": "userABC",
         "password": "password123"
     }
-    response = requests.post("http://localhost:8080/your_endpoint", json=payload)
+    response = requests.post("http://127.0.0.1:8080/your_endpoint", json=payload)
 
     # Debugging statements
     print(f"[JSON Payload] Received status code: {response.status_code}")
